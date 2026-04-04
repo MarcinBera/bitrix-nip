@@ -73,19 +73,44 @@ function renderPreview(data) {
   previewBox.style.display = "block";
 }
 
+function mapVoivodeshipToBitrixValue(name) {
+  const map = {
+    "dolnośląskie": 398,
+    "kujawsko-pomorskie": 418,
+    "lubelskie": 406,
+    "lubuskie": 396,
+    "łódzkie": 412,
+    "małopolskie": 408,
+    "mazowieckie": 414,
+    "opolskie": 400,
+    "podkarpackie": 410,
+    "podlaskie": 416,
+    "pomorskie": 420,
+    "śląskie": 402,
+    "świętokrzyskie": 404,
+    "warmińsko-mazurskie": 392,
+    "wielkopolskie": 390,
+    "zachodniopomorskie": 394
+  };
+
+  return map[String(name || "").toLowerCase()] || "";
+}
+
 async function createCompanyInBitrix(data) {
+  const voivodeshipValue = mapVoivodeshipToBitrixValue(data.voivodeship);
+
   return await bx24Call("crm.company.add", {
     fields: {
       TITLE: data.name || "Nowa firma",
       ADDRESS: data.street || "",
       ADDRESS_CITY: data.city || "",
       ADDRESS_POSTAL_CODE: data.zip || "",
-      ADDRESS_PROVINCE: data.voivodeship || "",
-      UF_CRM_1643968306252: data.voivodeship || "",
       ADDRESS_COUNTRY: data.country || "Polska",
 
       UF_CRM_NIP_APP_1681381570080: data.nip || "",
       UF_CRM_1624525497: data.nip || "",
+
+      UF_CRM_1643968306252: voivodeshipValue,
 
       COMMENTS:
         `NIP: ${data.nip || "-"}\n` +
