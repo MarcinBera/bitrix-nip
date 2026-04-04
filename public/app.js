@@ -6,7 +6,8 @@ function setStatus(message, type = "") {
 
 function setDebug(value) {
   const debug = document.getElementById("debug");
-  debug.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  debug.textContent =
+    typeof value === "string" ? value : JSON.stringify(value, null, 2);
 }
 
 function cleanNip(value) {
@@ -15,7 +16,7 @@ function cleanNip(value) {
 
 function bx24Call(method, params = {}) {
   return new Promise((resolve, reject) => {
-    BX24.callMethod(method, params, function(result) {
+    BX24.callMethod(method, params, function (result) {
       if (result.error()) {
         reject(new Error(result.error()));
       } else {
@@ -34,7 +35,11 @@ function isLocalhost() {
 
 function getPlacementInfoSafe() {
   try {
-    if (typeof BX24 === "undefined" || !BX24.placement || !BX24.placement.info) {
+    if (
+      typeof BX24 === "undefined" ||
+      !BX24.placement ||
+      !BX24.placement.info
+    ) {
       return null;
     }
     return BX24.placement.info();
@@ -58,7 +63,7 @@ async function getCompany(companyId) {
 async function updateCompany(companyId, fields) {
   return await bx24Call("crm.company.update", {
     id: companyId,
-    fields
+    fields,
   });
 }
 
@@ -66,9 +71,9 @@ async function fetchCompanyByNip(nip) {
   const response = await fetch("/api/company-by-nip", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
     },
-    body: JSON.stringify({ nip })
+    body: JSON.stringify({ nip }),
   });
 
   const data = await response.json();
@@ -88,7 +93,9 @@ async function run() {
 
     if (!companyId) {
       if (!isLocalhost()) {
-        throw new Error("Nie udało się odczytać ID firmy z kontekstu Bitrix24.");
+        throw new Error(
+          "Nie udało się odczytać ID firmy z kontekstu Bitrix24.",
+        );
       }
 
       const testInput = document.getElementById("testNip");
@@ -101,7 +108,10 @@ async function run() {
       setStatus("Tryb lokalny: pobieram dane po NIP " + nip + " ...");
       const regonData = await fetchCompanyByNip(nip);
       setDebug({ mode: "localhost-test", regonData });
-      setStatus("Tryb lokalny działa poprawnie. Backend zwrócił dane.", "success");
+      setStatus(
+        "Tryb lokalny działa poprawnie. Backend zwrócił dane.",
+        "success",
+      );
       return;
     }
 
@@ -120,7 +130,7 @@ async function run() {
 
     if (!nip) {
       throw new Error(
-        "Ta firma nie ma odczytanego NIP-u w polu, które sprawdzamy. Trzeba ustalić, gdzie dokładnie Bitrix przechowuje NIP."
+        "Ta firma nie ma odczytanego NIP-u w polu, które sprawdzamy. Trzeba ustalić, gdzie dokładnie Bitrix przechowuje NIP.",
       );
     }
 
@@ -137,7 +147,7 @@ async function run() {
       COMMENTS:
         "Dane uzupełnione z NIP.\n" +
         `REGON: ${regonData.regon || "-"}\n` +
-        `KRS: ${regonData.krs || "-"}\n`
+        `KRS: ${regonData.krs || "-"}\n`,
     };
 
     await updateCompany(companyId, fieldsToUpdate);

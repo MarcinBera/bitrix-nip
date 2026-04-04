@@ -25,16 +25,16 @@ function getVoivodeshipFromPostalCode(postalCode) {
   const firstDigit = String(postalCode || "").trim()[0];
 
   const map = {
-    "0": "mazowieckie",
-    "1": "mazowieckie",
-    "2": "lubelskie",
-    "3": "małopolskie",
-    "4": "śląskie",
-    "5": "dolnośląskie",
-    "6": "wielkopolskie",
-    "7": "zachodniopomorskie",
-    "8": "pomorskie",
-    "9": "łódzkie"
+    0: "mazowieckie",
+    1: "mazowieckie",
+    2: "lubelskie",
+    3: "małopolskie",
+    4: "śląskie",
+    5: "dolnośląskie",
+    6: "wielkopolskie",
+    7: "zachodniopomorskie",
+    8: "pomorskie",
+    9: "łódzkie",
   };
 
   return map[firstDigit] || "";
@@ -46,7 +46,7 @@ async function getCompanyByNip(nip) {
     const url = `https://wl-api.mf.gov.pl/api/search/nip/${nip}?date=${today}`;
 
     const response = await axios.get(url, {
-      timeout: 15000
+      timeout: 15000,
     });
 
     const subject = response.data?.result?.subject;
@@ -55,7 +55,8 @@ async function getCompanyByNip(nip) {
       throw new Error("Nie znaleziono firmy dla tego NIP.");
     }
 
-    const fullAddress = subject.workingAddress || subject.residenceAddress || "";
+    const fullAddress =
+      subject.workingAddress || subject.residenceAddress || "";
     const postalCode = extractPostalCode(fullAddress);
     const voivodeship = getVoivodeshipFromPostalCode(postalCode);
 
@@ -70,7 +71,7 @@ async function getCompanyByNip(nip) {
       city: "",
       voivodeship,
       country: "Polska",
-      vatStatus: subject.statusVat || ""
+      vatStatus: subject.statusVat || "",
     };
   } catch (error) {
     console.error("Błąd MF API:", error.response?.data || error.message);
@@ -104,7 +105,7 @@ app.post("/api/company-by-nip", async (req, res) => {
     if (!nip || nip.length !== 10) {
       return res.status(400).json({
         ok: false,
-        message: "NIP musi mieć dokładnie 10 cyfr."
+        message: "NIP musi mieć dokładnie 10 cyfr.",
       });
     }
 
@@ -112,12 +113,12 @@ app.post("/api/company-by-nip", async (req, res) => {
 
     return res.json({
       ok: true,
-      data
+      data,
     });
   } catch (error) {
     return res.status(500).json({
       ok: false,
-      message: error.message || "Wewnętrzny błąd serwera."
+      message: error.message || "Wewnętrzny błąd serwera.",
     });
   }
 });
