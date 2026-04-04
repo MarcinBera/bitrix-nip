@@ -89,7 +89,7 @@ app.get("/", (req, res) => {
   `);
 });
 
-app.get("/install", (req, res) => {
+app.all("/install", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "install.html"));
 });
 
