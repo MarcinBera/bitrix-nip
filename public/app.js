@@ -202,22 +202,30 @@ async function handleCreateCompany() {
 
     setStatus("Tworzę firmę w Bitrix24...");
 
-    // const companyId = await createCompanyInBitrix(window.lastFetchedData);
     const result = await createCompanyInBitrix(window.lastFetchedData);
 
     if (result.duplicate) {
       setStatus(
         `Firma już istnieje: ${result.name} (ID: ${result.companyId})`,
-        "error",
+        "error"
       );
+
+      setDebug({
+        duplicate: true,
+        companyId: result.companyId,
+        name: result.name,
+        data: window.lastFetchedData
+      });
+
       return;
     }
 
     setStatus(`Firma została utworzona. ID: ${result.companyId}`, "success");
-    setStatus(`Firma została utworzona. ID: ${companyId}`, "success");
+
     setDebug({
-      createdCompanyId: companyId,
-      data: window.lastFetchedData,
+      duplicate: false,
+      createdCompanyId: result.companyId,
+      data: window.lastFetchedData
     });
   } catch (error) {
     console.error(error);
