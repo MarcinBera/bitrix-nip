@@ -11,76 +11,92 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
 
-/**
- * Prosty helper:
- * usuwa wszystko poza cyframi z NIP-u
- */
 function cleanNip(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
-/**
- * UWAGA:
- * API REGON działa specyficznie i oficjalnie wymaga klucza + obsługi ich sposobu autoryzacji.
- * Ten kod poniżej ma przygotowaną strukturę endpointu backendowego.
- *
- * W miejscu getCompanyFromRegon() finalnie podłączysz prawdziwe wywołanie REGON.
- * Na start daję tryb DEMO, żebyś mógł uruchomić całość i zobaczyć integrację z Bitrix.
- */
-async function getCompanyFromRegon(nip) {
+function extractPostalCode(address) {
+  if (!address) return "";
+  const match = String(address).match(/\b\d{2}-\d{3}\b/);
+  return match ? match[0] : "";
+}
+
+function getVoivodeshipFromPostalCode(postalCode) {
+  const firstDigit = String(postalCode || "").trim()[0];
+
+  const map = {
+    "0": "mazowieckie",
+    "1": "mazowieckie",
+    "2": "lubelskie",
+    "3": "małopolskie",
+    "4": "śląskie",
+    "5": "dolnośląskie",
+    "6": "wielkopolskie",
+    "7": "zachodniopomorskie",
+    "8": "pomorskie",
+    "9": "łódzkie"
+  };
+
+  return map[firstDigit] || "";
+}
+
+async function getCompanyByNip(nip) {
   try {
     const today = new Date().toISOString().slice(0, 10);
-
     const url = `https://wl-api.mf.gov.pl/api/search/nip/${nip}?date=${today}`;
 
-    const response = await axios.get(url);
+    const response = await axios.get(url, {
+      timeout: 15000
+    });
 
-    const result = response.data?.result?.subject;
+    const subject = response.data?.result?.subject;
 
-    if (!result) {
+    if (!subject) {
       throw new Error("Nie znaleziono firmy dla tego NIP.");
     }
 
+    const fullAddress = subject.workingAddress || subject.residenceAddress || "";
+    const postalCode = extractPostalCode(fullAddress);
+    const voivodeship = getVoivodeshipFromPostalCode(postalCode);
+
     return {
       source: "mf",
-      nip: result.nip,
-      name: result.name,
-      regon: result.regon,
-      krs: result.krs,
-      street: result.workingAddress,
-      zip: "", // MF nie zawsze rozdziela
+      nip: subject.nip || nip,
+      name: subject.name || "",
+      regon: subject.regon || "",
+      krs: subject.krs || "",
+      street: fullAddress,
+      zip: postalCode,
       city: "",
-      voivodeship: "",
+      voivodeship,
       country: "Polska",
-      vatStatus: result.statusVat
+      vatStatus: subject.statusVat || ""
     };
-
   } catch (error) {
-    console.error("Błąd MF API:", error.message);
-
+    console.error("Błąd MF API:", error.response?.data || error.message);
     throw new Error("Nie udało się pobrać danych z Ministerstwa Finansów.");
   }
 }
 
-/**
- * Strona instalacyjna aplikacji Bitrix
- */
+app.get("/", (req, res) => {
+  res.send(`
+    <h1>Serwer działa</h1>
+    <p>Wejdź na:</p>
+    <ul>
+      <li><a href="/install">/install</a></li>
+      <li><a href="/company-tab">/company-tab</a></li>
+    </ul>
+  `);
+});
+
 app.get("/install", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "install.html"));
 });
 
-/**
- * Strona zakładki w karcie firmy
- */
 app.all("/company-tab", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "company-tab.html"));
 });
 
-/**
- * Endpoint backendowy:
- * frontend z Bitrixa poda NIP,
- * backend zwróci dane firmy
- */
 app.post("/api/company-by-nip", async (req, res) => {
   try {
     const nip = cleanNip(req.body.nip);
@@ -92,15 +108,13 @@ app.post("/api/company-by-nip", async (req, res) => {
       });
     }
 
-    const data = await getCompanyFromRegon(nip);
+    const data = await getCompanyByNip(nip);
 
     return res.json({
       ok: true,
       data
     });
   } catch (error) {
-    console.error("Błąd /api/company-by-nip:", error.message);
-
     return res.status(500).json({
       ok: false,
       message: error.message || "Wewnętrzny błąd serwera."
@@ -108,6 +122,6 @@ app.post("/api/company-by-nip", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Serwer działa na http://localhost:${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Serwer działa na porcie ${PORT}`);
 });
