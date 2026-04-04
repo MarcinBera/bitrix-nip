@@ -75,31 +75,67 @@ function renderPreview(data) {
 
 function mapVoivodeshipToBitrixValue(name) {
   const map = {
-    "dolnośląskie": 398,
+    dolnośląskie: 398,
     "kujawsko-pomorskie": 418,
-    "lubelskie": 406,
-    "lubuskie": 396,
-    "łódzkie": 412,
-    "małopolskie": 408,
-    "mazowieckie": 414,
-    "opolskie": 400,
-    "podkarpackie": 410,
-    "podlaskie": 416,
-    "pomorskie": 420,
-    "śląskie": 402,
-    "świętokrzyskie": 404,
+    lubelskie: 406,
+    lubuskie: 396,
+    łódzkie: 412,
+    małopolskie: 408,
+    mazowieckie: 414,
+    opolskie: 400,
+    podkarpackie: 410,
+    podlaskie: 416,
+    pomorskie: 420,
+    śląskie: 402,
+    świętokrzyskie: 404,
     "warmińsko-mazurskie": 392,
-    "wielkopolskie": 390,
-    "zachodniopomorskie": 394
+    wielkopolskie: 390,
+    zachodniopomorskie: 394,
   };
 
   return map[String(name || "").toLowerCase()] || "";
 }
 
+async function findCompanyByNip(nip) {
+  const result = await bx24Call("crm.company.list", {
+    filter: {
+      UF_CRM_NIP_APP_1681381570080: nip,
+    },
+    select: ["ID", "TITLE"],
+  });
+
+  return result && result.length > 0 ? result[0] : null;
+}
+
 async function createCompanyInBitrix(data) {
+  // 🔍 sprawdź czy firma już istnieje
+  let existing = await findCompanyByNip(data.nip);
+
+  // fallback na drugie pole NIP (jeśli masz dwa)
+  if (!existing) {
+    const result = await bx24Call("crm.company.list", {
+      filter: {
+        UF_CRM_1624525497: data.nip,
+      },
+      select: ["ID", "TITLE"],
+    });
+
+    existing = result && result.length > 0 ? result[0] : null;
+  }
+
+  if (existing) {
+    return {
+      duplicate: true,
+      companyId: existing.ID,
+      name: existing.TITLE,
+    };
+  }
+
+  // 🔥 mapowanie województwa (to co już masz)
   const voivodeshipValue = mapVoivodeshipToBitrixValue(data.voivodeship);
 
-  return await bx24Call("crm.company.add", {
+  // ➕ tworzenie firmy
+  const newId = await bx24Call("crm.company.add", {
     fields: {
       TITLE: data.name || "Nowa firma",
       ADDRESS: data.street || "",
@@ -107,18 +143,23 @@ async function createCompanyInBitrix(data) {
       ADDRESS_POSTAL_CODE: data.zip || "",
       ADDRESS_COUNTRY: data.country || "Polska",
 
+      UF_CRM_1643968306252: voivodeshipValue,
+
       UF_CRM_NIP_APP_1681381570080: data.nip || "",
       UF_CRM_1624525497: data.nip || "",
-
-      UF_CRM_1643968306252: voivodeshipValue,
 
       COMMENTS:
         `NIP: ${data.nip || "-"}\n` +
         `REGON: ${data.regon || "-"}\n` +
         `KRS: ${data.krs || "-"}\n` +
-        `VAT: ${data.vatStatus || "-"}`
-    }
+        `VAT: ${data.vatStatus || "-"}`,
+    },
   });
+
+  return {
+    duplicate: false,
+    companyId: newId,
+  };
 }
 
 async function handleFetch() {
@@ -161,12 +202,22 @@ async function handleCreateCompany() {
 
     setStatus("Tworzę firmę w Bitrix24...");
 
-    const companyId = await createCompanyInBitrix(window.lastFetchedData);
+    // const companyId = await createCompanyInBitrix(window.lastFetchedData);
+    const result = await createCompanyInBitrix(window.lastFetchedData);
 
+    if (result.duplicate) {
+      setStatus(
+        `Firma już istnieje: ${result.name} (ID: ${result.companyId})`,
+        "error",
+      );
+      return;
+    }
+
+    setStatus(`Firma została utworzona. ID: ${result.companyId}`, "success");
     setStatus(`Firma została utworzona. ID: ${companyId}`, "success");
     setDebug({
       createdCompanyId: companyId,
-      data: window.lastFetchedData
+      data: window.lastFetchedData,
     });
   } catch (error) {
     console.error(error);
