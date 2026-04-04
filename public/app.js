@@ -25,8 +25,28 @@ function bx24Call(method, params = {}) {
   });
 }
 
+function isLocalhost() {
+  return (
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1"
+  );
+}
+
+function getPlacementInfoSafe() {
+  try {
+    if (typeof BX24 === "undefined" || !BX24.placement || !BX24.placement.info) {
+      return null;
+    }
+    return BX24.placement.info();
+  } catch (e) {
+    return null;
+  }
+}
+
 async function getCurrentCompanyId() {
-  const placementInfo = BX24.placement.info();
+  const placementInfo = getPlacementInfoSafe();
+  if (!placementInfo) return null;
+
   const options = placementInfo.options || {};
   return options.ID || null;
 }
@@ -62,23 +82,36 @@ async function fetchCompanyByNip(nip) {
 
 async function run() {
   try {
-    setStatus("Inicjalizacja...");
+    setStatus("Start...");
+
     const companyId = await getCurrentCompanyId();
 
     if (!companyId) {
-      throw new Error("Nie udało się odczytać ID firmy z kontekstu Bitrix24.");
+      if (!isLocalhost()) {
+        throw new Error("Nie udało się odczytać ID firmy z kontekstu Bitrix24.");
+      }
+
+      const testInput = document.getElementById("testNip");
+      const nip = cleanNip(testInput ? testInput.value : "");
+
+      if (!nip) {
+        throw new Error("Na localhost wpisz testowy NIP w dodatkowym polu.");
+      }
+
+      setStatus("Tryb lokalny: pobieram dane po NIP " + nip + " ...");
+      const regonData = await fetchCompanyByNip(nip);
+      setDebug({ mode: "localhost-test", regonData });
+      setStatus("Tryb lokalny działa poprawnie. Backend zwrócił dane.", "success");
+      return;
     }
 
     setStatus("Pobieram dane bieżącej firmy z Bitrix24...");
     const company = await getCompany(companyId);
     setDebug({ companyId, company });
 
-    // Najczęściej NIP siedzi w polu UF_CRM_* albo w standardowym polu,
-    // zależnie od konfiguracji portalu.
-    // Na start sprawdzamy kilka typowych miejsc.
     const possibleNip =
       company.UF_CRM_NIP ||
-      company.UF_CRM_1680000000 || // placeholder, jeśli kiedyś zrobisz własne pole
+      company.UF_CRM_1680000000 ||
       company.REQUISITE_INN ||
       company.INN ||
       "";
@@ -87,7 +120,7 @@ async function run() {
 
     if (!nip) {
       throw new Error(
-        "Ta firma nie ma odczytanego NIP-u w polu, które sprawdzamy. Najpierw upewnij się, gdzie dokładnie Bitrix przechowuje NIP."
+        "Ta firma nie ma odczytanego NIP-u w polu, które sprawdzamy. Trzeba ustalić, gdzie dokładnie Bitrix przechowuje NIP."
       );
     }
 
@@ -95,7 +128,6 @@ async function run() {
     const regonData = await fetchCompanyByNip(nip);
     setDebug({ companyId, company, regonData });
 
-    // Mapowanie danych do pól Bitrix
     const fieldsToUpdate = {
       TITLE: regonData.name || company.TITLE,
       ADDRESS: regonData.street || "",
@@ -105,8 +137,7 @@ async function run() {
       COMMENTS:
         "Dane uzupełnione z NIP.\n" +
         `REGON: ${regonData.regon || "-"}\n` +
-        `KRS: ${regonData.krs || "-"}\n` +
-        `Województwo: ${regonData.voivodeship || "-"}`
+        `KRS: ${regonData.krs || "-"}\n`
     };
 
     await updateCompany(companyId, fieldsToUpdate);
@@ -121,5 +152,14 @@ async function run() {
 document.getElementById("fetchBtn").addEventListener("click", run);
 
 BX24.init(function () {
+  if (isLocalhost()) {
+    const localTestBox = document.getElementById("localTestBox");
+    if (localTestBox) {
+      localTestBox.style.display = "block";
+    }
+    setStatus("Tryb lokalny. Wpisz testowy NIP i kliknij przycisk.");
+    return;
+  }
+
   setStatus("Zakładka gotowa. Kliknij przycisk.");
 });

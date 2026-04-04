@@ -22,18 +22,12 @@
       border: none;
       border-radius: 8px;
       cursor: pointer;
-    }
-    #fetchBtn {
       background: #2f7cf6;
       color: white;
     }
     #status {
       margin-top: 12px;
       white-space: pre-wrap;
-    }
-    .muted {
-      color: #666;
-      font-size: 14px;
     }
     .success {
       color: green;
@@ -46,17 +40,28 @@
       padding: 12px;
       border-radius: 8px;
       overflow: auto;
+      margin-top: 12px;
+    }
+    #localTestBox {
+      margin-top: 16px;
+    }
+    #testNip {
+      margin-top: 8px;
+      padding: 8px;
+      width: 240px;
     }
   </style>
 </head>
 <body>
   <div class="card">
     <h2>Dane firmy z NIP</h2>
-    <p class="muted">
-      Kliknij przycisk, a aplikacja pobierze dane firmy po NIP i zapisze je w rekordzie firmy.
-    </p>
 
     <button id="fetchBtn">Pobierz dane z NIP</button>
+
+    <div id="localTestBox">
+      <p>Testowy NIP:</p>
+      <input id="testNip" type="text" placeholder="wpisz NIP" />
+    </div>
 
     <div id="status"></div>
     <pre id="debug"></pre>

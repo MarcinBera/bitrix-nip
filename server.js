@@ -28,32 +28,38 @@ function cleanNip(value) {
  * Na start daję tryb DEMO, żebyś mógł uruchomić całość i zobaczyć integrację z Bitrix.
  */
 async function getCompanyFromRegon(nip) {
-  const apiKey = process.env.REGON_API_KEY;
+  try {
+    const today = new Date().toISOString().slice(0, 10);
 
-  if (!apiKey || apiKey === "TU_WSTAWISZ_SWÓJ_KLUCZ") {
-    // Tryb demo do testów UI i Bitrixa
+    const url = `https://wl-api.mf.gov.pl/api/search/nip/${nip}?date=${today}`;
+
+    const response = await axios.get(url);
+
+    const result = response.data?.result?.subject;
+
+    if (!result) {
+      throw new Error("Nie znaleziono firmy dla tego NIP.");
+    }
+
     return {
-      source: "demo",
-      nip,
-      name: "DEMO Sp. z o.o.",
-      regon: "123456789",
-      krs: "0000123456",
-      street: "Marszałkowska 1",
-      zip: "00-001",
-      city: "Warszawa",
-      voivodeship: "mazowieckie",
-      country: "Polska"
+      source: "mf",
+      nip: result.nip,
+      name: result.name,
+      regon: result.regon,
+      krs: result.krs,
+      street: result.workingAddress,
+      zip: "", // MF nie zawsze rozdziela
+      city: "",
+      voivodeship: "",
+      country: "Polska",
+      vatStatus: result.statusVat
     };
-  }
 
-  /**
-   * TODO: tutaj podłączysz prawdziwe REGON.
-   * Na razie zostawiam błąd kontrolowany, żeby było jasne, że backend działa,
-   * tylko produkcyjny connector REGON nie jest jeszcze dopięty.
-   */
-  throw new Error(
-    "Backend działa, ale prawdziwe wywołanie REGON nie zostało jeszcze podłączone."
-  );
+  } catch (error) {
+    console.error("Błąd MF API:", error.message);
+
+    throw new Error("Nie udało się pobrać danych z Ministerstwa Finansów.");
+  }
 }
 
 /**
