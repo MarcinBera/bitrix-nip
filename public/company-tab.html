@@ -1,221 +1,148 @@
-function setStatus(message, type = "") {
-  const el = document.getElementById("status");
-  el.className = type;
-  el.textContent = message;
-}
-
-function setDebug(value) {
-  const debug = document.getElementById("debug");
-  debug.textContent =
-    typeof value === "string" ? value : JSON.stringify(value, null, 2);
-}
-
-function cleanNip(value) {
-  return String(value || "").replace(/\D/g, "");
-}
-
-function bx24Call(method, params = {}) {
-  return new Promise((resolve, reject) => {
-    BX24.callMethod(method, params, function (result) {
-      if (result.error()) {
-        reject(new Error(result.error()));
-      } else {
-        resolve(result.data());
-      }
-    });
-  });
-}
-
-function isLocalhost() {
-  return (
-    window.location.hostname === "localhost" ||
-    window.location.hostname === "127.0.0.1"
-  );
-}
-
-function getPlacementInfoSafe() {
-  try {
-    if (
-      typeof BX24 === "undefined" ||
-      !BX24.placement ||
-      !BX24.placement.info
-    ) {
-      return null;
-    }
-    return BX24.placement.info();
-  } catch (e) {
-    return null;
-  }
-}
-
-async function getCurrentCompanyId() {
-  const placementInfo = getPlacementInfoSafe();
-  if (!placementInfo) return null;
-
-  const options = placementInfo.options || {};
-  return options.ID || null;
-}
-
-async function getCompany(companyId) {
-  return await bx24Call("crm.company.get", { id: companyId });
-}
-
-async function updateCompany(companyId, fields) {
-  return await bx24Call("crm.company.update", {
-    id: companyId,
-    fields,
-  });
-}
-
-async function createCompanyInBitrix(data) {
-  return new Promise((resolve, reject) => {
-    BX24.callMethod(
-      "crm.company.add",
-      {
-        fields: {
-          TITLE: data.name,
-          ADDRESS: data.street,
-          ADDRESS_CITY: data.city,
-          ADDRESS_POSTAL_CODE: data.zip,
-          ADDRESS_PROVINCE: data.voivodeship,
-          UF_CRM_NIP_APP_1681381570080: data.nip,
-          UF_CRM_1624525497: data.nip,
-          COMMENTS: `REGON: ${data.regon}\nKRS: ${data.krs}\nVAT: ${data.vatStatus || ""}`
-        }
-      },
-      function(result) {
-        if (result.error()) {
-          reject(result.error());
-        } else {
-          resolve(result.data());
-        }
-      }
-    );
-  });
-}
-
-async function fetchCompanyByNip(nip) {
-  const response = await fetch("/api/company-by-nip", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ nip }),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok || !data.ok) {
-    throw new Error(data.message || "Nie udało się pobrać danych z backendu.");
-  }
-
-  return data.data;
-}
-
-async function run() {
-  try {
-    setStatus("Start...");
-
-    const companyId = await getCurrentCompanyId();
-
-    if (!companyId) {
-      if (!isLocalhost()) {
-        throw new Error(
-          "Nie udało się odczytać ID firmy z kontekstu Bitrix24.",
-        );
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Dane z NIP</title>
+    <script src="//api.bitrix24.com/api/v1/"></script>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        padding: 18px;
+        line-height: 1.5;
+        background: #fff;
       }
 
-      const testInput = document.getElementById("testNip");
-      const nip = cleanNip(testInput ? testInput.value : "");
-
-      if (!nip) {
-        throw new Error("Na localhost wpisz testowy NIP w dodatkowym polu.");
+      .card {
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        padding: 20px;
+        max-width: 900px;
       }
 
-      setStatus("Tryb lokalny: pobieram dane po NIP " + nip + " ...");
-      const regonData = await fetchCompanyByNip(nip);
-      setDebug({ mode: "localhost-test", regonData });
-      setStatus(
-        "Tryb lokalny działa poprawnie. Backend zwrócił dane.",
-        "success",
-      );
-      return;
-    }
+      h2 {
+        margin-top: 0;
+      }
 
-    setStatus("Pobieram dane bieżącej firmy z Bitrix24...");
-    const company = await getCompany(companyId);
-    setDebug({ companyId, company });
+      .row {
+        margin-bottom: 14px;
+      }
 
-    const possibleNip =
-      company.UF_CRM_NIP_APP_1681381570080 ||
-      company.UF_CRM_1624525497 ||
-      company.UF_CRM_NIP ||
-      company.REQUISITE_INN ||
-      company.INN ||
-      "";
+      label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 600;
+      }
 
-    const nip = cleanNip(possibleNip);
+      input {
+        width: 260px;
+        padding: 10px;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        font-size: 14px;
+      }
 
-    if (!nip) {
-      throw new Error(
-        "Ta firma nie ma odczytanego NIP-u w polu, które sprawdzamy. Trzeba ustalić, gdzie dokładnie Bitrix przechowuje NIP.",
-      );
-    }
+      button {
+        padding: 10px 16px;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        background: #2f7cf6;
+        color: white;
+        margin-right: 10px;
+      }
 
-    setStatus("Pobieram dane po NIP: " + nip + " ...");
-    const regonData = await fetchCompanyByNip(nip);
-    setDebug({ companyId, company, regonData });
+      button.secondary {
+        background: #14a44d;
+      }
 
-    const fieldsToUpdate = {
-      TITLE: regonData.name || company.TITLE,
-      ADDRESS: regonData.street || "",
-      ADDRESS_CITY: regonData.city || "",
-      ADDRESS_POSTAL_CODE: regonData.zip || "",
-      ADDRESS_COUNTRY: regonData.country || "Polska",
-      COMMENTS:
-        "Dane uzupełnione z NIP.\n" +
-        `REGON: ${regonData.regon || "-"}\n` +
-        `KRS: ${regonData.krs || "-"}\n`,
-    };
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
 
-    await updateCompany(companyId, fieldsToUpdate);
+      #status {
+        margin-top: 14px;
+        white-space: pre-wrap;
+      }
 
-    setStatus("Gotowe. Dane firmy zostały zaktualizowane.", "success");
-  } catch (error) {
-    console.error(error);
-    setStatus(error.message || "Wystąpił błąd.", "error");
-  }
-}
+      .success {
+        color: green;
+      }
 
-document.getElementById("fetchBtn").addEventListener("click", run);
+      .error {
+        color: red;
+      }
 
-BX24.init(function () {
-  if (isLocalhost()) {
-    const localTestBox = document.getElementById("localTestBox");
-    if (localTestBox) {
-      localTestBox.style.display = "block";
-    }
-    setStatus("Tryb lokalny. Wpisz testowy NIP i kliknij przycisk.");
-    return;
-  }
+      .preview {
+        margin-top: 18px;
+        border: 1px solid #eee;
+        border-radius: 10px;
+        padding: 16px;
+        background: #fafafa;
+      }
 
-  setStatus("Zakładka gotowa. Kliknij przycisk.");
-});
+      .preview h3 {
+        margin-top: 0;
+      }
 
-document.getElementById("createCompanyBtn").addEventListener("click", async () => {
-  try {
-    if (!window.lastFetchedData) {
-      setStatus("Najpierw pobierz dane z NIP", "error");
-      return;
-    }
+      .preview-grid {
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        gap: 8px 14px;
+      }
 
-    setStatus("Tworzę firmę w Bitrix...", "loading");
+      .preview-label {
+        font-weight: 600;
+        color: #555;
+      }
 
-    const result = await createCompanyInBitrix(window.lastFetchedData);
+      pre {
+        background: #f7f7f7;
+        padding: 12px;
+        border-radius: 8px;
+        overflow: auto;
+        margin-top: 12px;
+        min-height: 24px;
+      }
 
-    setStatus("✅ Firma utworzona! ID: " + result, "success");
+      .footer {
+        margin-top: 20px;
+        font-size: 12px;
+        color: #888;
+        text-align: right;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2>Dane firmy z NIP</h2>
 
-  } catch (e) {
-    setStatus("❌ Błąd: " + e, "error");
-  }
-});
+      <div class="row">
+        <label for="nipInput">NIP</label>
+        <input id="nipInput" type="text" placeholder="Wpisz 10-cyfrowy NIP" />
+      </div>
+
+      <div class="row">
+        <button id="fetchBtn">Pobierz dane z NIP</button>
+        <button id="createCompanyBtn" class="secondary" disabled>
+          Dodaj nową firmę do Bitrix24
+        </button>
+      </div>
+
+      <div id="status"></div>
+
+      <div id="previewBox" class="preview" style="display: none">
+        <h3>Podgląd danych</h3>
+        <div id="previewContent" class="preview-grid"></div>
+      </div>
+
+      <pre id="debug"></pre>
+
+      <div class="footer">
+        Developed by Marcin Bera Consulting
+      </div>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
