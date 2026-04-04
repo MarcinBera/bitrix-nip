@@ -18,6 +18,11 @@ function cleanNip(value) {
 
 function bx24Call(method, params = {}) {
   return new Promise((resolve, reject) => {
+    if (typeof BX24 === "undefined" || !BX24.callMethod) {
+      reject(new Error("BX24 nie jest dostępny."));
+      return;
+    }
+
     BX24.callMethod(method, params, function (result) {
       if (result.error()) {
         reject(new Error(result.error()));
@@ -76,6 +81,7 @@ async function createCompanyInBitrix(data) {
       ADDRESS_CITY: data.city || "",
       ADDRESS_POSTAL_CODE: data.zip || "",
       ADDRESS_PROVINCE: data.voivodeship || "",
+      UF_CRM_1643968306252: data.voivodeship || "",
       ADDRESS_COUNTRY: data.country || "Polska",
 
       UF_CRM_NIP_APP_1681381570080: data.nip || "",
@@ -101,7 +107,7 @@ async function handleFetch() {
       throw new Error("Wpisz poprawny 10-cyfrowy NIP.");
     }
 
-    setStatus("Pobieram dane po NIP...", "");
+    setStatus("Pobieram dane po NIP...");
     setDebug("");
 
     const data = await fetchCompanyByNip(nip);
@@ -128,7 +134,7 @@ async function handleCreateCompany() {
       throw new Error("Najpierw pobierz dane z NIP.");
     }
 
-    setStatus("Tworzę firmę w Bitrix24...", "");
+    setStatus("Tworzę firmę w Bitrix24...");
 
     const companyId = await createCompanyInBitrix(window.lastFetchedData);
 
@@ -143,7 +149,7 @@ async function handleCreateCompany() {
   }
 }
 
-BX24.init(function () {
+function initApp() {
   const fetchBtn = document.getElementById("fetchBtn");
   const createCompanyBtn = document.getElementById("createCompanyBtn");
 
@@ -155,5 +161,21 @@ BX24.init(function () {
     createCompanyBtn.addEventListener("click", handleCreateCompany);
   }
 
-  setStatus("Wpisz NIP i pobierz dane.", "");
+  setStatus("Wpisz NIP i pobierz dane.");
+}
+
+// NA LOCALHOST uruchamiamy od razu.
+// W BITRIXIE próbujemy przez BX24.init, ale z fallbackiem.
+document.addEventListener("DOMContentLoaded", function () {
+  initApp();
+
+  if (typeof BX24 !== "undefined" && BX24.init) {
+    try {
+      BX24.init(function () {
+        console.log("BX24.init OK");
+      });
+    } catch (e) {
+      console.log("BX24.init pominięte:", e);
+    }
+  }
 });
