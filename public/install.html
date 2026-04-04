@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <title>Instalacja aplikacji</title>
+  <script src="//api.bitrix24.com/api/v1/"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 24px;
+      line-height: 1.5;
+    }
+    .box {
+      max-width: 700px;
+      margin: 0 auto;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 20px;
+    }
+    .ok { color: green; }
+    .err { color: red; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h1>Instalacja integracji NIP → firma</h1>
+    <p id="status">Trwa instalacja...</p>
+  </div>
+
+  <script>
+    BX24.init(function () {
+      const status = document.getElementById("status");
+
+      BX24.callMethod(
+        "placement.bind",
+        {
+          PLACEMENT: "CRM_COMPANY_DETAIL_TAB",
+          HANDLER: window.location.origin + "/company-tab",
+          TITLE: "Dane z NIP"
+        },
+        function(result) {
+          if (result.error()) {
+            status.innerHTML = '<span class="err">Błąd rejestracji zakładki: ' + result.error() + '</span>';
+            return;
+          }
+
+          status.innerHTML = '<span class="ok">Zakładka została zarejestrowana. Kończę instalację...</span>';
+
+          // Bardzo ważne dla aplikacji z interfejsem:
+          BX24.installFinish();
+        }
+      );
+    });
+  </script>
+</body>
+</html>

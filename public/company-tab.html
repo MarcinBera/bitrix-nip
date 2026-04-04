@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dane z NIP</title>
+  <script src="//api.bitrix24.com/api/v1/"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 18px;
+      line-height: 1.5;
+      background: #fff;
+    }
+    .card {
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 16px;
+      max-width: 800px;
+    }
+    button {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    #fetchBtn {
+      background: #2f7cf6;
+      color: white;
+    }
+    #status {
+      margin-top: 12px;
+      white-space: pre-wrap;
+    }
+    .muted {
+      color: #666;
+      font-size: 14px;
+    }
+    .success {
+      color: green;
+    }
+    .error {
+      color: red;
+    }
+    pre {
+      background: #f7f7f7;
+      padding: 12px;
+      border-radius: 8px;
+      overflow: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Dane firmy z NIP</h2>
+    <p class="muted">
+      Kliknij przycisk, a aplikacja pobierze dane firmy po NIP i zapisze je w rekordzie firmy.
+    </p>
+
+    <button id="fetchBtn">Pobierz dane z NIP</button>
+
+    <div id="status"></div>
+    <pre id="debug"></pre>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
