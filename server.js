@@ -126,3 +126,54 @@ app.post("/api/company-by-nip", async (req, res) => {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Serwer działa na porcie ${PORT}`);
 });
+
+app.post("/parse-email", async (req, res) => {
+  try {
+    // const { body } = req.body;
+    const activity = req.body.data?.FIELDS;
+
+    if (!activity || activity.TYPE_ID !== "4") {
+      return res.json({ skip: true }); // nie mail
+    }
+
+    const body = activity.DESCRIPTION || "";
+
+    if (!body) {
+      return res.status(400).json({ error: "Brak body maila" });
+    }
+
+    // 🔥 PROSTY PARSER
+    const emailMatch = body.match(/[\w.-]+@[\w.-]+\.\w+/);
+    const phoneMatch = body.match(/(\+?\d[\d\s-]{7,})/);
+
+    const nameMatch = body.split("\n")[0]; // pierwsza linia jako imię
+
+    const email = emailMatch ? emailMatch[0] : "";
+    const phone = phoneMatch ? phoneMatch[0] : "";
+    const name = nameMatch || "Nowy kontakt";
+
+    // 🔥 TWORZENIE KONTAKTU
+    const response = await fetch(
+      `${process.env.BITRIX_WEBHOOK}crm.contact.add`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fields: {
+            NAME: name,
+            PHONE: [{ VALUE: phone, VALUE_TYPE: "WORK" }],
+            EMAIL: [{ VALUE: email, VALUE_TYPE: "WORK" }],
+            COMMENTS: body,
+          },
+        }),
+      },
+    );
+
+    const data = await response.json();
+
+    res.json({ success: true, contactId: data.result });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Błąd parsera maila" });
+  }
+});
