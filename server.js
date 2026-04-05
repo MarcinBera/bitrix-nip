@@ -171,19 +171,69 @@ app.post("/parse-email", async (req, res) => {
       return res.json({ ok: true, skipped: "empty email body" });
     }
 
-    // 3. Parser stopki
+    // 3. Parser stopki — wersja poprawiona
     const plainText = body
       .replace(/<br\s*\/?>/gi, "\n")
       .replace(/<\/div>/gi, "\n")
       .replace(/<\/p>/gi, "\n")
       .replace(/<[^>]*>/g, "")
+      .replace(/&nbsp;/gi, " ")
       .replace(/\r/g, "")
       .split("\n")
-      .map((x) => x.trim())
+      .map((x) => x.replace(/\s+/g, " ").trim())
       .filter(Boolean);
 
-    // bierzemy ostatnie linie jako potencjalną stopkę
-    const signatureLines = plainText.slice(-12);
+    // usuń typowe śmieci i disclaimery
+    const cleanedLines = plainText.filter((line) => {
+      const lower = line.toLowerCase();
+
+      if (!line) return false;
+      if (lower.includes("nie zawiera wirusów")) return false;
+      if (lower.includes("www.avast.com")) return false;
+      if (lower.includes("polityka-prywatnosci")) return false;
+      if (lower.includes("spółka zarejestrowana")) return false;
+      if (lower.includes("kapitał zakładowy")) return false;
+      if (lower.includes("zasady przetwarzania danych")) return false;
+      if (lower.includes("obowiązkowe przeglądy regałów")) return false;
+      if (lower.includes("krs:")) return false;
+      if (lower.includes("regon:")) return false;
+      if (lower.includes("nip:")) return false;
+
+      return true;
+    });
+
+    // funkcja: czy linia wygląda jak imię i nazwisko
+    function looksLikePersonName(line) {
+      if (!line) return false;
+      if (/@/.test(line)) return false;
+      if (/\d/.test(line)) return false;
+      if (line.length < 5) return false;
+      if (line.length > 60) return false;
+
+      const words = line.split(" ").filter(Boolean);
+      if (words.length < 2 || words.length > 4) return false;
+
+      return words.every((w) =>
+        /^[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźżA-ZĄĆĘŁŃÓŚŹŻ-]+$/.test(w),
+      );
+    }
+
+    // szukamy początku właściwej stopki
+    let signatureStartIndex = -1;
+
+    for (let i = 0; i < cleanedLines.length; i++) {
+      if (looksLikePersonName(cleanedLines[i])) {
+        signatureStartIndex = i;
+        break;
+      }
+    }
+
+    // fallback: jeśli nie znaleziono imienia i nazwiska
+    const signatureLines =
+      signatureStartIndex >= 0
+        ? cleanedLines.slice(signatureStartIndex, signatureStartIndex + 10)
+        : cleanedLines.slice(-10);
+
     const signatureText = signatureLines.join("\n");
 
     // regexy
@@ -192,49 +242,68 @@ app.post("/parse-email", async (req, res) => {
     );
     const phoneMatch = signatureText.match(/(\+?\d[\d\s().-]{7,}\d)/);
     const postalCodeMatch = signatureText.match(/\b\d{2}-\d{3}\b/);
+
+    // www: tylko prawdziwe strony, nie fragment maila
     const websiteMatch = signatureText.match(
-      /(?:https?:\/\/)?(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}/i,
+      /\b(?:https?:\/\/)?(?:www\.)[a-z0-9.-]+\.[a-z]{2,}\b/i,
     );
 
-    // imię i nazwisko bierzemy z pierwszej linii
-    const firstLine = signatureLines[0] || "";
-    const parts = firstLine.split(" ").filter(Boolean);
+    // imię i nazwisko
+    const nameLine = signatureLines[0] || "";
+    const nameParts = nameLine.split(" ").filter(Boolean);
 
-    const firstName = parts[0] || "";
-    const lastName = parts.slice(1).join(" ") || "";
+    const firstName = nameParts[0] || "";
+    const lastName = nameParts.slice(1).join(" ") || "";
 
-    // stanowisko: zwykle druga linia, jeśli nie jest mailem/telefonem
+    // stanowisko: następna linia po imieniu i nazwisku
     let jobTitle = "";
     if (signatureLines[1]) {
-      const secondLine = signatureLines[1].trim();
+      const line = signatureLines[1].trim();
 
-      const looksLikeEmail = /@/.test(secondLine);
-      const looksLikePhone = /\d{3}/.test(secondLine);
-
-      if (!looksLikeEmail && !looksLikePhone) {
-        jobTitle = secondLine;
+      if (
+        !/@/.test(line) &&
+        !/\+?\d[\d\s().-]{7,}\d/.test(line) &&
+        !/\b\d{2}-\d{3}\b/.test(line) &&
+        !/^(pozdrawiam|best regards|regards|pozdrowienia)/i.test(line)
+      ) {
+        jobTitle = line;
       }
     }
 
-    // firma: pierwsza linia po stanowisku, która nie wygląda jak telefon/mail/adres www
+    // firma: pierwsza sensowna linia po stanowisku
     let companyName = "";
     for (let i = 2; i < signatureLines.length; i++) {
       const line = signatureLines[i].trim();
+      const lower = line.toLowerCase();
 
       if (!line) continue;
       if (/@/.test(line)) continue;
       if (/\+?\d[\d\s().-]{7,}\d/.test(line)) continue;
-      if (/(?:https?:\/\/)?(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}/i.test(line))
-        continue;
       if (/\b\d{2}-\d{3}\b/.test(line)) continue;
+      if (/^(pozdrawiam|best regards|regards|pozdrowienia)/i.test(line))
+        continue;
+      if (
+        /^dyrektor|^manager|^sales|^specjalista|^prezes|^ceo|^cto|^coo/i.test(
+          lower,
+        )
+      )
+        continue;
 
       companyName = line;
       break;
     }
 
-    // adres: próbujemy znaleźć linię z kodem pocztowym
+    // adres i miasto
     let address = "";
+    // jeśli firma nie została znaleziona osobno, spróbuj wyciągnąć ją z linii adresowej
+    if (!companyName && address) {
+      const companyFromAddressMatch = address.match(/^(.*?sp\.\s*z\s*o\.o\.)/i);
+      if (companyFromAddressMatch) {
+        companyName = companyFromAddressMatch[1].trim();
+      }
+    }
     let city = "";
+
     if (postalCodeMatch) {
       const postalCode = postalCodeMatch[0];
 
