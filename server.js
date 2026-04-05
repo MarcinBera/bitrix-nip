@@ -128,52 +128,78 @@ app.listen(PORT, "0.0.0.0", () => {
 });
 
 app.post("/parse-email", async (req, res) => {
-  try {
-    // const { body } = req.body;
-    const activity = req.body.data?.FIELDS;
+  console.log("=== /parse-email HIT ===");
+  console.log("BODY:", JSON.stringify(req.body, null, 2));
 
-    if (!activity || activity.TYPE_ID !== "4") {
-      return res.json({ skip: true }); // nie mail
+  try {
+    const activity = req.body?.data?.FIELDS;
+
+    if (!activity) {
+      return res.json({ ok: true, skipped: "no activity fields" });
+    }
+
+    if (String(activity.TYPE_ID) !== "4") {
+      return res.json({ ok: true, skipped: "not email activity" });
     }
 
     const body = activity.DESCRIPTION || "";
 
-    if (!body) {
-      return res.status(400).json({ error: "Brak body maila" });
-    }
-
-    // 🔥 PROSTY PARSER
-    const emailMatch = body.match(/[\w.-]+@[\w.-]+\.\w+/);
-    const phoneMatch = body.match(/(\+?\d[\d\s-]{7,})/);
-
-    const nameMatch = body.split("\n")[0]; // pierwsza linia jako imię
-
-    const email = emailMatch ? emailMatch[0] : "";
-    const phone = phoneMatch ? phoneMatch[0] : "";
-    const name = nameMatch || "Nowy kontakt";
-
-    // 🔥 TWORZENIE KONTAKTU
-    const response = await fetch(
-      `${process.env.BITRIX_WEBHOOK}crm.contact.add`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fields: {
-            NAME: name,
-            PHONE: [{ VALUE: phone, VALUE_TYPE: "WORK" }],
-            EMAIL: [{ VALUE: email, VALUE_TYPE: "WORK" }],
-            COMMENTS: body,
-          },
-        }),
-      },
-    );
-
-    const data = await response.json();
-
-    res.json({ success: true, contactId: data.result });
+    return res.json({ ok: true, message: "activity received", preview: body.slice(0, 200) });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Błąd parsera maila" });
+    console.error("parse-email error:", err);
+    return res.status(500).json({ ok: false, error: "server error" });
   }
 });
+
+// app.post("/parse-email", async (req, res) => {
+//   console.log("=== /parse-email HIT ===");
+//   console.log("BODY:", JSON.stringify(req.body, null, 2));
+//   try {
+//     // const { body } = req.body;
+//     const activity = req.body.data?.FIELDS;
+
+//     if (!activity || activity.TYPE_ID !== "4") {
+//       return res.json({ skip: true }); // nie mail
+//     }
+
+//     const body = activity.DESCRIPTION || "";
+
+//     if (!body) {
+//       return res.status(400).json({ error: "Brak body maila" });
+//     }
+
+//     // 🔥 PROSTY PARSER
+//     const emailMatch = body.match(/[\w.-]+@[\w.-]+\.\w+/);
+//     const phoneMatch = body.match(/(\+?\d[\d\s-]{7,})/);
+
+//     const nameMatch = body.split("\n")[0]; // pierwsza linia jako imię
+
+//     const email = emailMatch ? emailMatch[0] : "";
+//     const phone = phoneMatch ? phoneMatch[0] : "";
+//     const name = nameMatch || "Nowy kontakt";
+
+//     // 🔥 TWORZENIE KONTAKTU
+//     const response = await fetch(
+//       `${process.env.BITRIX_WEBHOOK}crm.contact.add`,
+//       {
+//         method: "POST",
+//         headers: { "Content-Type": "application/json" },
+//         body: JSON.stringify({
+//           fields: {
+//             NAME: name,
+//             PHONE: [{ VALUE: phone, VALUE_TYPE: "WORK" }],
+//             EMAIL: [{ VALUE: email, VALUE_TYPE: "WORK" }],
+//             COMMENTS: body,
+//           },
+//         }),
+//       },
+//     );
+
+//     const data = await response.json();
+
+//     res.json({ success: true, contactId: data.result });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ error: "Błąd parsera maila" });
+//   }
+// });
