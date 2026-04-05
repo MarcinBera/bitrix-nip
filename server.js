@@ -133,7 +133,12 @@ app.post("/parse-email", async (req, res) => {
 
   try {
     const activityId = req.body?.data?.FIELDS?.ID;
-
+    console.log("BITRIX_WEBHOOK =", process.env.BITRIX_WEBHOOK);
+    console.log("activityId =", activityId);
+    console.log(
+      "crm.activity.get URL =",
+      `${process.env.BITRIX_WEBHOOK}crm.activity.get.json`,
+    );
     if (!activityId) {
       return res.json({ ok: true, skipped: "no activity id" });
     }
