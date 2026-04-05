@@ -132,21 +132,131 @@ app.post("/parse-email", async (req, res) => {
   console.log("BODY:", JSON.stringify(req.body, null, 2));
 
   try {
-    const activity = req.body?.data?.FIELDS;
+    const activityId = req.body?.data?.FIELDS?.ID;
 
-    if (!activity) {
-      return res.json({ ok: true, skipped: "no activity fields" });
+    if (!activityId) {
+      return res.json({ ok: true, skipped: "no activity id" });
     }
 
+    // 1. Pobierz pełną aktywność z Bitrix
+    const activityResponse = await axios.post(
+      `${process.env.BITRIX_WEBHOOK}crm.activity.get.json`,
+      {
+        id: activityId,
+      },
+    );
+
+    const activity = activityResponse.data?.result;
+
+    console.log("=== ACTIVITY ===");
+    console.log(JSON.stringify(activity, null, 2));
+
+    if (!activity) {
+      return res.json({ ok: true, skipped: "activity not found" });
+    }
+
+    // 2. Bierzemy tylko e-mail
     if (String(activity.TYPE_ID) !== "4") {
       return res.json({ ok: true, skipped: "not email activity" });
     }
 
-    const body = activity.DESCRIPTION || "";
+    const body = activity.DESCRIPTION || activity.DESCRIPTION_HTML || "";
 
-    return res.json({ ok: true, message: "activity received", preview: body.slice(0, 200) });
+    if (!body) {
+      return res.json({ ok: true, skipped: "empty email body" });
+    }
+
+    // 3. Bardzo prosty parser stopki
+    const lines = body
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/div>/gi, "\n")
+      .replace(/<[^>]*>/g, "")
+      .split("\n")
+      .map((x) => x.trim())
+      .filter(Boolean);
+
+    // bierzemy ostatnie 10 linii
+    const signatureLines = lines.slice(-10);
+
+    const signatureText = signatureLines.join("\n");
+
+    const emailMatch = signatureText.match(
+      /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i,
+    );
+    const phoneMatch = signatureText.match(/(\+?\d[\d\s()-]{7,}\d)/);
+
+    const firstLine = signatureLines[0] || "";
+    const parts = firstLine.split(" ").filter(Boolean);
+
+    const firstName = parts[0] || "";
+    const lastName = parts.slice(1).join(" ") || "";
+
+    const email = emailMatch ? emailMatch[0] : "";
+    const phone = phoneMatch ? phoneMatch[0] : "";
+
+    console.log("=== PARSED SIGNATURE ===");
+    console.log({
+      firstName,
+      lastName,
+      email,
+      phone,
+      signatureText,
+    });
+
+    // 4. Jeśli nie ma nawet maila i telefonu, to pomijamy
+    if (!email && !phone) {
+      return res.json({ ok: true, skipped: "no useful contact data" });
+    }
+
+    // 5. Sprawdzenie duplikatu po emailu
+    let existingContacts = [];
+
+    if (email) {
+      const contactListResponse = await axios.post(
+        `${process.env.BITRIX_WEBHOOK}crm.contact.list.json`,
+        {
+          filter: {
+            EMAIL: email,
+          },
+          select: ["ID", "NAME", "LAST_NAME"],
+        },
+      );
+
+      existingContacts = contactListResponse.data?.result || [];
+    }
+
+    if (existingContacts.length > 0) {
+      return res.json({
+        ok: true,
+        duplicate: true,
+        contactId: existingContacts[0].ID,
+      });
+    }
+
+    // 6. Tworzenie kontaktu
+    const addContactResponse = await axios.post(
+      `${process.env.BITRIX_WEBHOOK}crm.contact.add.json`,
+      {
+        fields: {
+          NAME: firstName || "Nieznane",
+          LAST_NAME: lastName || "Kontakt z maila",
+          PHONE: phone ? [{ VALUE: phone, VALUE_TYPE: "WORK" }] : [],
+          EMAIL: email ? [{ VALUE: email, VALUE_TYPE: "WORK" }] : [],
+          COMMENTS:
+            "Utworzone automatycznie ze stopki e-mail.\n\n" + signatureText,
+        },
+      },
+    );
+
+    const newContactId = addContactResponse.data?.result;
+
+    return res.json({
+      ok: true,
+      created: true,
+      contactId: newContactId,
+    });
   } catch (err) {
-    console.error("parse-email error:", err);
+    console.error("parse-email error:", err.response?.data || err.message);
     return res.status(500).json({ ok: false, error: "server error" });
   }
 });
