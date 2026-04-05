@@ -171,40 +171,99 @@ app.post("/parse-email", async (req, res) => {
       return res.json({ ok: true, skipped: "empty email body" });
     }
 
-    // 3. Bardzo prosty parser stopki
-    const lines = body
+    // 3. Parser stopki
+    const plainText = body
       .replace(/<br\s*\/?>/gi, "\n")
       .replace(/<\/div>/gi, "\n")
+      .replace(/<\/p>/gi, "\n")
       .replace(/<[^>]*>/g, "")
+      .replace(/\r/g, "")
       .split("\n")
       .map((x) => x.trim())
       .filter(Boolean);
 
-    // bierzemy ostatnie 10 linii
-    const signatureLines = lines.slice(-10);
-
+    // bierzemy ostatnie linie jako potencjalną stopkę
+    const signatureLines = plainText.slice(-12);
     const signatureText = signatureLines.join("\n");
 
+    // regexy
     const emailMatch = signatureText.match(
       /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i,
     );
-    const phoneMatch = signatureText.match(/(\+?\d[\d\s()-]{7,}\d)/);
+    const phoneMatch = signatureText.match(/(\+?\d[\d\s().-]{7,}\d)/);
+    const postalCodeMatch = signatureText.match(/\b\d{2}-\d{3}\b/);
+    const websiteMatch = signatureText.match(
+      /(?:https?:\/\/)?(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}/i,
+    );
 
+    // imię i nazwisko bierzemy z pierwszej linii
     const firstLine = signatureLines[0] || "";
     const parts = firstLine.split(" ").filter(Boolean);
 
     const firstName = parts[0] || "";
     const lastName = parts.slice(1).join(" ") || "";
 
+    // stanowisko: zwykle druga linia, jeśli nie jest mailem/telefonem
+    let jobTitle = "";
+    if (signatureLines[1]) {
+      const secondLine = signatureLines[1].trim();
+
+      const looksLikeEmail = /@/.test(secondLine);
+      const looksLikePhone = /\d{3}/.test(secondLine);
+
+      if (!looksLikeEmail && !looksLikePhone) {
+        jobTitle = secondLine;
+      }
+    }
+
+    // firma: pierwsza linia po stanowisku, która nie wygląda jak telefon/mail/adres www
+    let companyName = "";
+    for (let i = 2; i < signatureLines.length; i++) {
+      const line = signatureLines[i].trim();
+
+      if (!line) continue;
+      if (/@/.test(line)) continue;
+      if (/\+?\d[\d\s().-]{7,}\d/.test(line)) continue;
+      if (/(?:https?:\/\/)?(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}/i.test(line))
+        continue;
+      if (/\b\d{2}-\d{3}\b/.test(line)) continue;
+
+      companyName = line;
+      break;
+    }
+
+    // adres: próbujemy znaleźć linię z kodem pocztowym
+    let address = "";
+    let city = "";
+    if (postalCodeMatch) {
+      const postalCode = postalCodeMatch[0];
+
+      for (const line of signatureLines) {
+        if (line.includes(postalCode)) {
+          address = line;
+
+          const cityMatch = line.match(/\b\d{2}-\d{3}\s+(.+)$/);
+          city = cityMatch ? cityMatch[1].trim() : "";
+          break;
+        }
+      }
+    }
+
     const email = emailMatch ? emailMatch[0] : "";
     const phone = phoneMatch ? phoneMatch[0] : "";
+    const website = websiteMatch ? websiteMatch[0] : "";
 
     console.log("=== PARSED SIGNATURE ===");
     console.log({
       firstName,
       lastName,
+      jobTitle,
+      companyName,
+      address,
+      city,
       email,
       phone,
+      website,
       signatureText,
     });
 
@@ -245,8 +304,12 @@ app.post("/parse-email", async (req, res) => {
         fields: {
           NAME: firstName || "Nieznane",
           LAST_NAME: lastName || "Kontakt z maila",
+          POST: jobTitle || "",
+          COMPANY_TITLE: companyName || "",
+          ADDRESS: address || "",
           PHONE: phone ? [{ VALUE: phone, VALUE_TYPE: "WORK" }] : [],
           EMAIL: email ? [{ VALUE: email, VALUE_TYPE: "WORK" }] : [],
+          WEB: website ? [{ VALUE: website, VALUE_TYPE: "WORK" }] : [],
           COMMENTS:
             "Utworzone automatycznie ze stopki e-mail.\n\n" + signatureText,
         },
