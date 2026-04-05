@@ -171,7 +171,7 @@ app.post("/parse-email", async (req, res) => {
       return res.json({ ok: true, skipped: "empty email body" });
     }
 
-    // 3. Parser stopki — wersja poprawiona
+    // 3. Parser stopki — wersja oparta o kotwice (email/phone/www)
     const plainText = body
       .replace(/<br\s*\/?>/gi, "\n")
       .replace(/<\/div>/gi, "\n")
@@ -183,7 +183,7 @@ app.post("/parse-email", async (req, res) => {
       .map((x) => x.replace(/\s+/g, " ").trim())
       .filter(Boolean);
 
-    // usuń typowe śmieci i disclaimery
+    // odfiltrowanie śmieci
     const cleanedLines = plainText.filter((line) => {
       const lower = line.toLowerCase();
 
@@ -191,117 +191,189 @@ app.post("/parse-email", async (req, res) => {
       if (lower.includes("nie zawiera wirusów")) return false;
       if (lower.includes("www.avast.com")) return false;
       if (lower.includes("polityka-prywatnosci")) return false;
+      if (lower.includes("zasady przetwarzania danych")) return false;
       if (lower.includes("spółka zarejestrowana")) return false;
       if (lower.includes("kapitał zakładowy")) return false;
-      if (lower.includes("zasady przetwarzania danych")) return false;
-      if (lower.includes("obowiązkowe przeglądy regałów")) return false;
-      if (lower.includes("krs:")) return false;
-      if (lower.includes("regon:")) return false;
-      if (lower.includes("nip:")) return false;
+      if (lower.includes("obowiązkowe przeglądy")) return false;
+      if (lower.includes("confidentiality notice")) return false;
+      if (lower.includes("this email and any attachments")) return false;
+      if (lower.includes("please consider the environment")) return false;
 
       return true;
     });
 
-    // funkcja: czy linia wygląda jak imię i nazwisko
-    function looksLikePersonName(line) {
-      if (!line) return false;
-      if (/@/.test(line)) return false;
-      if (/\d/.test(line)) return false;
-      if (line.length < 5) return false;
-      if (line.length > 60) return false;
+    function isEmailLine(line) {
+      return /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(line);
+    }
 
-      const words = line.split(" ").filter(Boolean);
-      if (words.length < 2 || words.length > 4) return false;
+    function isPhoneLine(line) {
+      return /(\+?\d[\d\s().-]{7,}\d)/.test(line);
+    }
+
+    function isWebsiteLine(line) {
+      return /\b(?:https?:\/\/)?(?:www\.)[a-z0-9.-]+\.[a-z]{2,}\b/i.test(line);
+    }
+
+    function looksLikeName(line) {
+      if (!line) return false;
+      if (isEmailLine(line)) return false;
+      if (isPhoneLine(line)) return false;
+      if (isWebsiteLine(line)) return false;
+      if (/\d/.test(line)) return false;
+      if (line.length < 4) return false;
+      if (line.length > 80) return false;
+      if (/[.,;:]/.test(line)) return false;
+
+      const words = line.split(/\s+/).filter(Boolean);
+      if (words.length < 2 || words.length > 5) return false;
 
       return words.every((w) =>
-        /^[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźżA-ZĄĆĘŁŃÓŚŹŻ-]+$/.test(w),
+        /^[A-ZĄĆĘŁŃÓŚŹŻ][A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż'-]+$/.test(w),
       );
     }
 
-    // szukamy początku właściwej stopki
-    let signatureStartIndex = -1;
+    function looksLikeJobTitle(line) {
+      if (!line) return false;
+      if (isEmailLine(line)) return false;
+      if (isPhoneLine(line)) return false;
+      if (isWebsiteLine(line)) return false;
+      if (/\b\d{2}-\d{3}\b/.test(line)) return false;
+      if (line.length > 100) return false;
 
-    for (let i = 0; i < cleanedLines.length; i++) {
-      if (looksLikePersonName(cleanedLines[i])) {
-        signatureStartIndex = i;
+      const lower = line.toLowerCase();
+
+      return (
+        lower.includes("manager") ||
+        lower.includes("director") ||
+        lower.includes("specialist") ||
+        lower.includes("sales") ||
+        lower.includes("marketing") ||
+        lower.includes("operations") ||
+        lower.includes("procurement") ||
+        lower.includes("strategic sourcing") ||
+        lower.includes("dyrektor") ||
+        lower.includes("kierownik") ||
+        lower.includes("specjalista") ||
+        lower.includes("menedżer") ||
+        lower.includes("managerka") ||
+        lower.includes("prezes") ||
+        lower.includes("ceo") ||
+        lower.includes("coo") ||
+        lower.includes("cto")
+      );
+    }
+
+    function looksLikeCompany(line) {
+      if (!line) return false;
+      if (isEmailLine(line)) return false;
+      if (isPhoneLine(line)) return false;
+      if (isWebsiteLine(line)) return false;
+      if (/\b\d{2}-\d{3}\b/.test(line)) return false;
+      if (line.length > 120) return false;
+
+      const lower = line.toLowerCase();
+
+      return (
+        lower.includes("sp. z o.o") ||
+        lower.includes("s.a.") ||
+        lower.includes("llc") ||
+        lower.includes("ltd") ||
+        lower.includes("inc") ||
+        lower.includes("gmbh") ||
+        lower.includes("corp") ||
+        lower.includes("company") ||
+        lower.includes("robotics") ||
+        lower.includes("logistics") ||
+        lower.includes("solutions") ||
+        lower.includes("systems") ||
+        /^[A-Z0-9& .,'()/-]{4,}$/.test(line)
+      );
+    }
+
+    // 1. znajdź kotwicę: email / phone / website
+    let anchorIndex = -1;
+
+    for (let i = cleanedLines.length - 1; i >= 0; i--) {
+      const line = cleanedLines[i];
+      if (isEmailLine(line) || isPhoneLine(line) || isWebsiteLine(line)) {
+        anchorIndex = i;
         break;
       }
     }
 
-    // fallback: jeśli nie znaleziono imienia i nazwiska
+    // jeśli nie ma kotwicy, bierz ostatnie linie
     const signatureLines =
-      signatureStartIndex >= 0
-        ? cleanedLines.slice(signatureStartIndex, signatureStartIndex + 10)
-        : cleanedLines.slice(-10);
+      anchorIndex >= 0
+        ? cleanedLines.slice(
+            Math.max(0, anchorIndex - 4),
+            Math.min(cleanedLines.length, anchorIndex + 4),
+          )
+        : cleanedLines.slice(-8);
 
     const signatureText = signatureLines.join("\n");
 
-    // regexy
+    // 2. pola kontaktowe
     const emailMatch = signatureText.match(
       /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i,
     );
     const phoneMatch = signatureText.match(/(\+?\d[\d\s().-]{7,}\d)/);
-    const postalCodeMatch = signatureText.match(/\b\d{2}-\d{3}\b/);
-
-    // www: tylko prawdziwe strony, nie fragment maila
     const websiteMatch = signatureText.match(
       /\b(?:https?:\/\/)?(?:www\.)[a-z0-9.-]+\.[a-z]{2,}\b/i,
     );
+    const postalCodeMatch = signatureText.match(/\b\d{2}-\d{3}\b/);
 
-    // imię i nazwisko
-    const nameLine = signatureLines[0] || "";
-    const nameParts = nameLine.split(" ").filter(Boolean);
+    const email = emailMatch ? emailMatch[0] : "";
+    const phone = phoneMatch ? phoneMatch[0] : "";
+    const website = websiteMatch ? websiteMatch[0] : "";
 
+    // 3. imię i nazwisko: szukaj NAJBLIŻEJ NAD kotwicą
+    let nameLine = "";
+    for (let i = 0; i < signatureLines.length; i++) {
+      if (looksLikeName(signatureLines[i])) {
+        nameLine = signatureLines[i];
+        break;
+      }
+    }
+
+    const nameParts = nameLine.split(/\s+/).filter(Boolean);
     const firstName = nameParts[0] || "";
     const lastName = nameParts.slice(1).join(" ") || "";
 
-    // stanowisko: następna linia po imieniu i nazwisku
+    // 4. stanowisko: linia po imieniu
     let jobTitle = "";
-    if (signatureLines[1]) {
-      const line = signatureLines[1].trim();
+    if (nameLine) {
+      const nameIndex = signatureLines.indexOf(nameLine);
+      const nextLine = signatureLines[nameIndex + 1] || "";
 
-      if (
-        !/@/.test(line) &&
-        !/\+?\d[\d\s().-]{7,}\d/.test(line) &&
-        !/\b\d{2}-\d{3}\b/.test(line) &&
-        !/^(pozdrawiam|best regards|regards|pozdrowienia)/i.test(line)
-      ) {
-        jobTitle = line;
+      if (looksLikeJobTitle(nextLine)) {
+        jobTitle = nextLine;
       }
     }
 
-    // firma: pierwsza sensowna linia po stanowisku
+    // 5. firma: pierwsza sensowna linia po stanowisku albo po imieniu
     let companyName = "";
-    for (let i = 2; i < signatureLines.length; i++) {
-      const line = signatureLines[i].trim();
-      const lower = line.toLowerCase();
+    if (nameLine) {
+      const nameIndex = signatureLines.indexOf(nameLine);
 
-      if (!line) continue;
-      if (/@/.test(line)) continue;
-      if (/\+?\d[\d\s().-]{7,}\d/.test(line)) continue;
-      if (/\b\d{2}-\d{3}\b/.test(line)) continue;
-      if (/^(pozdrawiam|best regards|regards|pozdrowienia)/i.test(line))
-        continue;
-      if (
-        /^dyrektor|^manager|^sales|^specjalista|^prezes|^ceo|^cto|^coo/i.test(
-          lower,
-        )
-      )
-        continue;
+      for (let i = nameIndex + 1; i < signatureLines.length; i++) {
+        const line = signatureLines[i];
 
-      companyName = line;
-      break;
-    }
+        if (!line) continue;
+        if (line === jobTitle) continue;
+        if (isEmailLine(line)) continue;
+        if (isPhoneLine(line)) continue;
+        if (isWebsiteLine(line)) continue;
+        if (/\b\d{2}-\d{3}\b/.test(line)) continue;
 
-    // adres i miasto
-    let address = "";
-    // jeśli firma nie została znaleziona osobno, spróbuj wyciągnąć ją z linii adresowej
-    if (!companyName && address) {
-      const companyFromAddressMatch = address.match(/^(.*?sp\.\s*z\s*o\.o\.)/i);
-      if (companyFromAddressMatch) {
-        companyName = companyFromAddressMatch[1].trim();
+        if (looksLikeCompany(line)) {
+          companyName = line;
+          break;
+        }
       }
     }
+
+    // 6. adres i miasto
+    let address = "";
     let city = "";
 
     if (postalCodeMatch) {
@@ -317,10 +389,6 @@ app.post("/parse-email", async (req, res) => {
         }
       }
     }
-
-    const email = emailMatch ? emailMatch[0] : "";
-    const phone = phoneMatch ? phoneMatch[0] : "";
-    const website = websiteMatch ? websiteMatch[0] : "";
 
     console.log("=== PARSED SIGNATURE ===");
     console.log({
@@ -415,7 +483,7 @@ app.post("/parse-email", async (req, res) => {
 //       return res.status(400).json({ error: "Brak body maila" });
 //     }
 
-//     // 🔥 PROSTY PARSER
+//     // PROSTY PARSER
 //     const emailMatch = body.match(/[\w.-]+@[\w.-]+\.\w+/);
 //     const phoneMatch = body.match(/(\+?\d[\d\s-]{7,})/);
 
@@ -425,7 +493,7 @@ app.post("/parse-email", async (req, res) => {
 //     const phone = phoneMatch ? phoneMatch[0] : "";
 //     const name = nameMatch || "Nowy kontakt";
 
-//     // 🔥 TWORZENIE KONTAKTU
+//     // TWORZENIE KONTAKTU
 //     const response = await fetch(
 //       `${process.env.BITRIX_WEBHOOK}crm.contact.add`,
 //       {
