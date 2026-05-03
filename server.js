@@ -129,9 +129,9 @@ app.post("/api/company-by-nip", async (req, res) => {
   }
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Serwer działa na porcie ${PORT}`);
-});
+// app.listen(PORT, "0.0.0.0", () => {
+//   console.log(`Serwer działa na porcie ${PORT}`);
+// });
 
 function extractEmail(str = "") {
   const match = String(str).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
@@ -195,6 +195,9 @@ async function parseSignatureWithAI({ text, senderEmail }) {
       },
     ],
   });
+
+  console.log("=== OPENAI USAGE ===");
+  console.log(response.usage);
 
   return JSON.parse(response.choices[0].message.content);
 }
@@ -274,6 +277,8 @@ app.post("/parse-email", async (req, res) => {
       emailMeta.__email ||
       "";
 
+    console.log("senderEmail =", senderEmail);
+
     // STOP: sprawdź czy kontakt już istnieje → NIE ODpalaj AI
     if (senderEmail) {
       const existingBySenderEmail = await bitrixPost("crm.contact.list", {
@@ -301,6 +306,9 @@ app.post("/parse-email", async (req, res) => {
         });
       }
     }
+
+    console.log("=== CONTACT NOT FOUND BY SENDER EMAIL ===");
+    console.log("=== OPENAI WILL RUN ===");
 
     const plainText = body
       .replace(/<br\s*\/?>/gi, "\n")
@@ -454,3 +462,7 @@ app.post("/parse-email", async (req, res) => {
 //     res.status(500).json({ error: "Błąd parsera maila" });
 //   }
 // });
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Serwer działa na porcie ${PORT}`);
+});
