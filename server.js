@@ -11,7 +11,6 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
 
-
 const OpenAI = require("openai");
 
 const openai = new OpenAI({
@@ -162,7 +161,7 @@ async function parseSignatureWithAI({ text, senderEmail }) {
             regionBranch: { type: "string" },
             email: { type: "string" },
             phone: { type: "string" },
-            website: { type: "string" }
+            website: { type: "string" },
           },
           required: [
             "is_signature",
@@ -176,25 +175,25 @@ async function parseSignatureWithAI({ text, senderEmail }) {
             "regionBranch",
             "email",
             "phone",
-            "website"
-          ]
-        }
-      }
+            "website",
+          ],
+        },
+      },
     },
     messages: [
       {
         role: "system",
         content:
-          "Jesteś parserem stopek e-mail. Zwracasz wyłącznie dane kontaktowe nadawcy. Ignoruj treść wiadomości, cytaty, disclaimery, reklamy i stopki antywirusowe. Nie zgaduj pól, jeśli ich nie ma."
+          "Jesteś parserem stopek e-mail. Zwracasz wyłącznie dane kontaktowe nadawcy. Ignoruj treść wiadomości, cytaty, disclaimery, reklamy i stopki antywirusowe. Nie zgaduj pól, jeśli ich nie ma.",
       },
       {
         role: "user",
         content:
           `Email nadawcy z systemu: ${senderEmail || ""}\n\n` +
           "Poniżej jest końcówka wiadomości e-mail. Znajdź stopkę nadawcy i wyodrębnij dane. Jeśli email nie występuje w stopce, użyj emaila nadawcy z systemu. Nie używaj emaili odbiorców.\n\n" +
-          text
-      }
-    ]
+          text,
+      },
+    ],
   });
 
   return JSON.parse(response.choices[0].message.content);
@@ -203,7 +202,7 @@ async function parseSignatureWithAI({ text, senderEmail }) {
 async function bitrixPost(method, payload) {
   const response = await axios.post(
     `${process.env.BITRIX_WEBHOOK}${method}.json`,
-    payload
+    payload,
   );
 
   return response.data?.result;
@@ -274,6 +273,34 @@ app.post("/parse-email", async (req, res) => {
       extractEmail(emailMeta.from || "") ||
       emailMeta.__email ||
       "";
+
+    // STOP: sprawdź czy kontakt już istnieje → NIE ODpalaj AI
+    if (senderEmail) {
+      const existingBySenderEmail = await bitrixPost("crm.contact.list", {
+        filter: {
+          EMAIL: senderEmail,
+        },
+        select: ["ID", "NAME", "LAST_NAME"],
+      });
+
+      if (existingBySenderEmail && existingBySenderEmail.length > 0) {
+        console.log("=== OPENAI SKIPPED ===");
+        console.log("Reason: contact exists by sender email");
+        console.log({
+          senderEmail,
+          contactId: existingBySenderEmail[0].ID,
+          name: existingBySenderEmail[0].NAME,
+          lastName: existingBySenderEmail[0].LAST_NAME,
+        });
+
+        return res.json({
+          ok: true,
+          skipped: "contact exists by sender email",
+          contactId: existingBySenderEmail[0].ID,
+          email: senderEmail,
+        });
+      }
+    }
 
     const plainText = body
       .replace(/<br\s*\/?>/gi, "\n")
@@ -350,9 +377,7 @@ app.post("/parse-email", async (req, res) => {
         PHONE: aiParsed.phone
           ? [{ VALUE: aiParsed.phone, VALUE_TYPE: "WORK" }]
           : [],
-        EMAIL: finalEmail
-          ? [{ VALUE: finalEmail, VALUE_TYPE: "WORK" }]
-          : [],
+        EMAIL: finalEmail ? [{ VALUE: finalEmail, VALUE_TYPE: "WORK" }] : [],
         WEB: aiParsed.website
           ? [{ VALUE: aiParsed.website, VALUE_TYPE: "WORK" }]
           : [],
