@@ -200,31 +200,55 @@ async function parseSignatureWithAI({ text, senderEmail }) {
   return JSON.parse(response.choices[0].message.content);
 }
 
+async function bitrixPost(method, payload) {
+  const response = await axios.post(
+    `${process.env.BITRIX_WEBHOOK}${method}.json`,
+    payload
+  );
+
+  return response.data?.result;
+}
+
+async function findOrCreateCompanyByName(companyName) {
+  if (!companyName) return null;
+
+  const existingCompanies = await bitrixPost("crm.company.list", {
+    filter: {
+      TITLE: companyName,
+    },
+    select: ["ID", "TITLE"],
+  });
+
+  if (existingCompanies && existingCompanies.length > 0) {
+    return existingCompanies[0].ID;
+  }
+
+  const newCompanyId = await bitrixPost("crm.company.add", {
+    fields: {
+      TITLE: companyName,
+    },
+  });
+
+  return newCompanyId;
+}
+
 app.post("/parse-email", async (req, res) => {
   console.log("=== /parse-email HIT ===");
   console.log("BODY:", JSON.stringify(req.body, null, 2));
 
   try {
     const activityId = req.body?.data?.FIELDS?.ID;
+
     console.log("BITRIX_WEBHOOK =", process.env.BITRIX_WEBHOOK);
     console.log("activityId =", activityId);
-    console.log(
-      "crm.activity.get URL =",
-      `${process.env.BITRIX_WEBHOOK}crm.activity.get.json`,
-    );
+
     if (!activityId) {
       return res.json({ ok: true, skipped: "no activity id" });
     }
 
-    // 1. Pobierz pełną aktywność z Bitrix
-    const activityResponse = await axios.post(
-      `${process.env.BITRIX_WEBHOOK}crm.activity.get.json`,
-      {
-        id: activityId,
-      },
-    );
-
-    const activity = activityResponse.data?.result;
+    const activity = await bitrixPost("crm.activity.get", {
+      id: activityId,
+    });
 
     console.log("=== ACTIVITY ===");
     console.log(JSON.stringify(activity, null, 2));
@@ -233,7 +257,6 @@ app.post("/parse-email", async (req, res) => {
       return res.json({ ok: true, skipped: "activity not found" });
     }
 
-    // 2. Bierzemy tylko e-mail
     if (String(activity.TYPE_ID) !== "4") {
       return res.json({ ok: true, skipped: "not email activity" });
     }
@@ -244,7 +267,14 @@ app.post("/parse-email", async (req, res) => {
       return res.json({ ok: true, skipped: "empty email body" });
     }
 
-    // 3. Parser stopki — wersja oparta o kotwice (email/phone/www)
+    const emailMeta = activity.SETTINGS?.EMAIL_META || {};
+
+    const senderEmail =
+      extractEmail(emailMeta.replyTo || "") ||
+      extractEmail(emailMeta.from || "") ||
+      emailMeta.__email ||
+      "";
+
     const plainText = body
       .replace(/<br\s*\/?>/gi, "\n")
       .replace(/<\/div>/gi, "\n")
@@ -252,286 +282,94 @@ app.post("/parse-email", async (req, res) => {
       .replace(/<[^>]*>/g, "")
       .replace(/&nbsp;/gi, " ")
       .replace(/\r/g, "")
-      .split("\n")
-      .map((x) => x.replace(/\s+/g, " ").trim())
-      .filter(Boolean);
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
 
-    // odfiltrowanie śmieci
-    const cleanedLines = plainText.filter((line) => {
-      const lower = line.toLowerCase();
+    const textForAI = plainText.slice(-4000);
 
-      if (!line) return false;
-      if (lower.includes("nie zawiera wirusów")) return false;
-      if (lower.includes("www.avast.com")) return false;
-      if (lower.includes("polityka-prywatnosci")) return false;
-      if (lower.includes("zasady przetwarzania danych")) return false;
-      if (lower.includes("spółka zarejestrowana")) return false;
-      if (lower.includes("kapitał zakładowy")) return false;
-      if (lower.includes("obowiązkowe przeglądy")) return false;
-      if (lower.includes("confidentiality notice")) return false;
-      if (lower.includes("this email and any attachments")) return false;
-      if (lower.includes("please consider the environment")) return false;
-
-      return true;
+    const aiParsed = await parseSignatureWithAI({
+      text: textForAI,
+      senderEmail,
     });
 
-    function isEmailLine(line) {
-      return /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(line);
+    console.log("=== AI PARSED SIGNATURE ===");
+    console.log(aiParsed);
+
+    if (!aiParsed.is_signature || aiParsed.confidence < 0.55) {
+      return res.json({
+        ok: true,
+        skipped: "low confidence",
+        aiParsed,
+      });
     }
 
-    function isPhoneLine(line) {
-      return /(\+?\d[\d\s().-]{7,}\d)/.test(line);
+    const finalEmail = aiParsed.email || senderEmail || "";
+
+    if (!finalEmail && !aiParsed.phone) {
+      return res.json({
+        ok: true,
+        skipped: "no useful contact data",
+        aiParsed,
+      });
     }
 
-    function isWebsiteLine(line) {
-      return /\b(?:https?:\/\/)?(?:www\.)[a-z0-9.-]+\.[a-z]{2,}\b/i.test(line);
-    }
-
-    function looksLikeName(line) {
-      if (!line) return false;
-      if (isEmailLine(line)) return false;
-      if (isPhoneLine(line)) return false;
-      if (isWebsiteLine(line)) return false;
-      if (/\d/.test(line)) return false;
-      if (line.length < 4) return false;
-      if (line.length > 80) return false;
-      if (/[.,;:]/.test(line)) return false;
-
-      const words = line.split(/\s+/).filter(Boolean);
-      if (words.length < 2 || words.length > 5) return false;
-
-      return words.every((w) =>
-        /^[A-ZĄĆĘŁŃÓŚŹŻ][A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż'-]+$/.test(w),
-      );
-    }
-
-    function looksLikeJobTitle(line) {
-      if (!line) return false;
-      if (isEmailLine(line)) return false;
-      if (isPhoneLine(line)) return false;
-      if (isWebsiteLine(line)) return false;
-      if (/\b\d{2}-\d{3}\b/.test(line)) return false;
-      if (line.length > 100) return false;
-
-      const lower = line.toLowerCase();
-
-      return (
-        lower.includes("manager") ||
-        lower.includes("director") ||
-        lower.includes("specialist") ||
-        lower.includes("sales") ||
-        lower.includes("marketing") ||
-        lower.includes("operations") ||
-        lower.includes("procurement") ||
-        lower.includes("strategic sourcing") ||
-        lower.includes("dyrektor") ||
-        lower.includes("kierownik") ||
-        lower.includes("specjalista") ||
-        lower.includes("menedżer") ||
-        lower.includes("managerka") ||
-        lower.includes("prezes") ||
-        lower.includes("ceo") ||
-        lower.includes("coo") ||
-        lower.includes("cto")
-      );
-    }
-
-    function looksLikeCompany(line) {
-      if (!line) return false;
-      if (isEmailLine(line)) return false;
-      if (isPhoneLine(line)) return false;
-      if (isWebsiteLine(line)) return false;
-      if (/\b\d{2}-\d{3}\b/.test(line)) return false;
-      if (line.length > 120) return false;
-
-      const lower = line.toLowerCase();
-
-      return (
-        lower.includes("sp. z o.o") ||
-        lower.includes("s.a.") ||
-        lower.includes("llc") ||
-        lower.includes("ltd") ||
-        lower.includes("inc") ||
-        lower.includes("gmbh") ||
-        lower.includes("corp") ||
-        lower.includes("company") ||
-        lower.includes("robotics") ||
-        lower.includes("logistics") ||
-        lower.includes("solutions") ||
-        lower.includes("systems") ||
-        /^[A-Z0-9& .,'()/-]{4,}$/.test(line)
-      );
-    }
-
-    // 1. znajdź kotwicę: email / phone / website
-    let anchorIndex = -1;
-
-    for (let i = cleanedLines.length - 1; i >= 0; i--) {
-      const line = cleanedLines[i];
-      if (isEmailLine(line) || isPhoneLine(line) || isWebsiteLine(line)) {
-        anchorIndex = i;
-        break;
-      }
-    }
-
-    // jeśli nie ma kotwicy, bierz ostatnie linie
-    const signatureLines =
-      anchorIndex >= 0
-        ? cleanedLines.slice(
-            Math.max(0, anchorIndex - 4),
-            Math.min(cleanedLines.length, anchorIndex + 4),
-          )
-        : cleanedLines.slice(-8);
-
-    const signatureText = signatureLines.join("\n");
-
-    // 2. pola kontaktowe
-    const emailMatch = signatureText.match(
-      /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i,
-    );
-    const phoneMatch = signatureText.match(/(\+?\d[\d\s().-]{7,}\d)/);
-    const websiteMatch = signatureText.match(
-      /\b(?:https?:\/\/)?(?:www\.)[a-z0-9.-]+\.[a-z]{2,}\b/i,
-    );
-    const postalCodeMatch = signatureText.match(/\b\d{2}-\d{3}\b/);
-
-    const email = emailMatch ? emailMatch[0] : "";
-    const phone = phoneMatch ? phoneMatch[0] : "";
-    const website = websiteMatch ? websiteMatch[0] : "";
-
-    // 3. imię i nazwisko: szukaj NAJBLIŻEJ NAD kotwicą
-    let nameLine = "";
-    for (let i = 0; i < signatureLines.length; i++) {
-      if (looksLikeName(signatureLines[i])) {
-        nameLine = signatureLines[i];
-        break;
-      }
-    }
-
-    const nameParts = nameLine.split(/\s+/).filter(Boolean);
-    const firstName = nameParts[0] || "";
-    const lastName = nameParts.slice(1).join(" ") || "";
-
-    // 4. stanowisko: linia po imieniu
-    let jobTitle = "";
-    if (nameLine) {
-      const nameIndex = signatureLines.indexOf(nameLine);
-      const nextLine = signatureLines[nameIndex + 1] || "";
-
-      if (looksLikeJobTitle(nextLine)) {
-        jobTitle = nextLine;
-      }
-    }
-
-    // 5. firma: pierwsza sensowna linia po stanowisku albo po imieniu
-    let companyName = "";
-    if (nameLine) {
-      const nameIndex = signatureLines.indexOf(nameLine);
-
-      for (let i = nameIndex + 1; i < signatureLines.length; i++) {
-        const line = signatureLines[i];
-
-        if (!line) continue;
-        if (line === jobTitle) continue;
-        if (isEmailLine(line)) continue;
-        if (isPhoneLine(line)) continue;
-        if (isWebsiteLine(line)) continue;
-        if (/\b\d{2}-\d{3}\b/.test(line)) continue;
-
-        if (looksLikeCompany(line)) {
-          companyName = line;
-          break;
-        }
-      }
-    }
-
-    // 6. adres i miasto
-    let address = "";
-    let city = "";
-
-    if (postalCodeMatch) {
-      const postalCode = postalCodeMatch[0];
-
-      for (const line of signatureLines) {
-        if (line.includes(postalCode)) {
-          address = line;
-
-          const cityMatch = line.match(/\b\d{2}-\d{3}\s+(.+)$/);
-          city = cityMatch ? cityMatch[1].trim() : "";
-          break;
-        }
-      }
-    }
-
-    console.log("=== PARSED SIGNATURE ===");
-    console.log({
-      firstName,
-      lastName,
-      jobTitle,
-      companyName,
-      address,
-      city,
-      email,
-      phone,
-      website,
-      signatureText,
-    });
-
-    // 4. Jeśli nie ma nawet maila i telefonu, to pomijamy
-    if (!email && !phone) {
-      return res.json({ ok: true, skipped: "no useful contact data" });
-    }
-
-    // 5. Sprawdzenie duplikatu po emailu
     let existingContacts = [];
 
-    if (email) {
-      const contactListResponse = await axios.post(
-        `${process.env.BITRIX_WEBHOOK}crm.contact.list.json`,
-        {
-          filter: {
-            EMAIL: email,
-          },
-          select: ["ID", "NAME", "LAST_NAME"],
+    if (finalEmail) {
+      existingContacts = await bitrixPost("crm.contact.list", {
+        filter: {
+          EMAIL: finalEmail,
         },
-      );
-
-      existingContacts = contactListResponse.data?.result || [];
+        select: ["ID", "NAME", "LAST_NAME"],
+      });
     }
 
-    if (existingContacts.length > 0) {
+    if (existingContacts && existingContacts.length > 0) {
       return res.json({
         ok: true,
         duplicate: true,
         contactId: existingContacts[0].ID,
+        aiParsed,
       });
     }
 
-    // 6. Tworzenie kontaktu
-    const addContactResponse = await axios.post(
-      `${process.env.BITRIX_WEBHOOK}crm.contact.add.json`,
-      {
-        fields: {
-          NAME: firstName || "Nieznane",
-          LAST_NAME: lastName || "Kontakt z maila",
-          POST: jobTitle || "",
-          COMPANY_TITLE: companyName || "",
-          ADDRESS: address || "",
-          PHONE: phone ? [{ VALUE: phone, VALUE_TYPE: "WORK" }] : [],
-          EMAIL: email ? [{ VALUE: email, VALUE_TYPE: "WORK" }] : [],
-          WEB: website ? [{ VALUE: website, VALUE_TYPE: "WORK" }] : [],
-          COMMENTS:
-            "Utworzone automatycznie ze stopki e-mail.\n\n" + signatureText,
-        },
-      },
-    );
+    let companyId = null;
 
-    const newContactId = addContactResponse.data?.result;
+    if (aiParsed.companyName) {
+      companyId = await findOrCreateCompanyByName(aiParsed.companyName);
+    }
+
+    const newContactId = await bitrixPost("crm.contact.add", {
+      fields: {
+        NAME: aiParsed.firstName || "Nieznane",
+        LAST_NAME: aiParsed.lastName || "Kontakt z maila",
+        POST: aiParsed.jobTitle || "",
+        COMPANY_ID: companyId || null,
+        ADDRESS: aiParsed.address || "",
+        ADDRESS_CITY: aiParsed.city || "",
+        PHONE: aiParsed.phone
+          ? [{ VALUE: aiParsed.phone, VALUE_TYPE: "WORK" }]
+          : [],
+        EMAIL: finalEmail
+          ? [{ VALUE: finalEmail, VALUE_TYPE: "WORK" }]
+          : [],
+        WEB: aiParsed.website
+          ? [{ VALUE: aiParsed.website, VALUE_TYPE: "WORK" }]
+          : [],
+        COMMENTS:
+          "Utworzone automatycznie przez AI ze stopki e-mail.\n\n" +
+          "Confidence: " +
+          aiParsed.confidence +
+          "\n\n" +
+          textForAI,
+      },
+    });
 
     return res.json({
       ok: true,
       created: true,
       contactId: newContactId,
+      aiParsed,
     });
   } catch (err) {
     console.error("parse-email error:", err.response?.data || err.message);
