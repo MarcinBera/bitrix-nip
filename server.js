@@ -11,6 +11,13 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
 
+
+const OpenAI = require("openai");
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
 function cleanNip(value) {
   return String(value || "").replace(/\D/g, "");
 }
@@ -126,6 +133,72 @@ app.post("/api/company-by-nip", async (req, res) => {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Serwer działa na porcie ${PORT}`);
 });
+
+function extractEmail(str = "") {
+  const match = String(str).match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return match ? match[0] : "";
+}
+
+async function parseSignatureWithAI({ text, senderEmail }) {
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    temperature: 0,
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "email_signature_parser",
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            is_signature: { type: "boolean" },
+            confidence: { type: "number" },
+            firstName: { type: "string" },
+            lastName: { type: "string" },
+            jobTitle: { type: "string" },
+            companyName: { type: "string" },
+            address: { type: "string" },
+            city: { type: "string" },
+            regionBranch: { type: "string" },
+            email: { type: "string" },
+            phone: { type: "string" },
+            website: { type: "string" }
+          },
+          required: [
+            "is_signature",
+            "confidence",
+            "firstName",
+            "lastName",
+            "jobTitle",
+            "companyName",
+            "address",
+            "city",
+            "regionBranch",
+            "email",
+            "phone",
+            "website"
+          ]
+        }
+      }
+    },
+    messages: [
+      {
+        role: "system",
+        content:
+          "Jesteś parserem stopek e-mail. Zwracasz wyłącznie dane kontaktowe nadawcy. Ignoruj treść wiadomości, cytaty, disclaimery, reklamy i stopki antywirusowe. Nie zgaduj pól, jeśli ich nie ma."
+      },
+      {
+        role: "user",
+        content:
+          `Email nadawcy z systemu: ${senderEmail || ""}\n\n` +
+          "Poniżej jest końcówka wiadomości e-mail. Znajdź stopkę nadawcy i wyodrębnij dane. Jeśli email nie występuje w stopce, użyj emaila nadawcy z systemu. Nie używaj emaili odbiorców.\n\n" +
+          text
+      }
+    ]
+  });
+
+  return JSON.parse(response.choices[0].message.content);
+}
 
 app.post("/parse-email", async (req, res) => {
   console.log("=== /parse-email HIT ===");
